@@ -51,6 +51,7 @@ struct Wal {
     current_block_size: u32,
 }
 
+#[derive(Debug)]
 struct ChunkStartPosition {
     block_number: u32,
     chunk_offset: u64,
@@ -177,6 +178,49 @@ impl Wal {
         }
         Ok(())
     }
+
+    pub fn read(&self, mut block_number: u32, mut chunk_offset: u64) -> Result<Vec<u8>, WalError> {
+        let file = self.file.read().unwrap();
+        let stat = file.metadata()?;
+        let mut result = Vec::new();
+        loop {
+            // The size of current block.
+            let mut size = BLOCK_SIZE as u64;
+            // The start position of the block in the file.
+            let offset = (block_number * (BLOCK_SIZE as u32)) as u64;
+            // Deal with the last situation.
+            if offset + size > stat.len() as u64 {
+                size = stat.len() as u64 - offset;
+            }
+            let mut buf = Vec::with_capacity(size as usize);
+            file.read_at(&mut buf, offset)?;
+            dbg!(&buf);
+            dbg!(block_number, chunk_offset);
+            // Header part
+            let mut header = Vec::with_capacity(CHUNK_HEADER_SIZE as usize);
+            header.copy_from_slice(
+                &buf[chunk_offset as usize..(chunk_offset as usize + CHUNK_HEADER_SIZE as usize)],
+            );
+            dbg!(&header);
+            // TODO: checksum
+
+            // Length
+            let length = u16::from_le_bytes(header[4..6].try_into().unwrap()) as usize;
+
+            // Copy data
+            let start = chunk_offset as usize + CHUNK_HEADER_SIZE as usize;
+            result.extend_from_slice(&buf[start..start + length]);
+
+            // Type
+            let chunk_type: ChunkType = header[6].into();
+            if chunk_type == ChunkType::Full || chunk_type == ChunkType::Last {
+                break;
+            }
+            block_number += 1;
+            chunk_offset = 0;
+        }
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -205,5 +249,16 @@ mod tests {
 
         dbg!(wal.current_block_size);
         // std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn wal_read() {
+        let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
+        let mut wal = Wal::open(&path).unwrap();
+
+        let s = (0..2028).map(|_| "A").collect::<String>();
+        let pos = wal.write(s.into_bytes()).unwrap();
+        dbg!(&pos);
+        wal.read(pos.block_number, pos.chunk_offset).unwrap();
     }
 }
