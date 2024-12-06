@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crc = "3.2.1"
+crc32fast = "1.4.2"
 thiserror = "2.0.4"

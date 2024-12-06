@@ -155,16 +155,18 @@ impl Wal {
         // Data: N Bytes, index:7-end
         buf[7..].copy_from_slice(&chunk_data);
         // Checksum: 4 Bytes, index:0-3
-        let sum = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&buf[4..]);
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&buf[4..]);
+        let sum = hasher.finalize();
         buf[0..4].copy_from_slice(&sum.to_le_bytes());
         // Append to the file
-        dbg!("begin write chunk to file");
+        // dbg!("begin write chunk to file");
         let mut file = self.file.write().unwrap();
         match file.write(&buf) {
             Ok(_) => dbg!("write successful"),
             Err(e) => dbg!(&format!("write failed: {:?}", e)),
         };
-        dbg!("end write chunk to file");
+        // dbg!("end write chunk to file");
         drop(file);
         if self.current_block_size > BLOCK_SIZE {
             panic!("Wrong! Can not exceed the block size");
@@ -192,20 +194,22 @@ impl Wal {
             if offset + size > stat.len() as u64 {
                 size = stat.len() as u64 - offset;
             }
-            let mut buf = Vec::with_capacity(size as usize);
-            file.read_at(&mut buf, offset)?;
-            dbg!(&buf);
-            dbg!(block_number, chunk_offset);
+            let mut buf = vec![0; size as usize];
+            file.read_exact_at(&mut buf, offset)?;
+            // file.read_at(&mut buf, offset)?;
+            // dbg!(buf.len());
+            // dbg!(block_number, chunk_offset);
+
             // Header part
-            let mut header = Vec::with_capacity(CHUNK_HEADER_SIZE as usize);
+            let mut header = vec![0; CHUNK_HEADER_SIZE as usize];
             header.copy_from_slice(
                 &buf[chunk_offset as usize..(chunk_offset as usize + CHUNK_HEADER_SIZE as usize)],
             );
-            dbg!(&header);
             // TODO: checksum
 
             // Length
             let length = u16::from_le_bytes(header[4..6].try_into().unwrap()) as usize;
+            dbg!(length);
 
             // Copy data
             let start = chunk_offset as usize + CHUNK_HEADER_SIZE as usize;
@@ -232,19 +236,19 @@ mod tests {
         let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
         let mut wal = Wal::open(&path).unwrap();
 
-        let s = (0..2028).map(|_| "A").collect::<String>();
+        let s = "A".repeat(2028);
         wal.write(s.into_bytes()).unwrap();
 
-        let s = (0..30 * 1024).map(|_| "A").collect::<String>();
+        let s = "A".repeat(30 * 1024);
         wal.write(s.into_bytes()).unwrap();
 
         let s = "A".to_string().into_bytes();
         wal.write(s).unwrap();
 
-        let s = (0..33 * 1024).map(|_| "A").collect::<String>();
+        let s = "A".repeat(33 * 1024);
         wal.write(s.into_bytes()).unwrap();
 
-        let s = (0..66 * 1024).map(|_| "A").collect::<String>();
+        let s = "A".repeat(66 * 1024);
         wal.write(s.into_bytes()).unwrap();
 
         dbg!(wal.current_block_size);
@@ -255,10 +259,14 @@ mod tests {
     fn wal_read() {
         let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
         let mut wal = Wal::open(&path).unwrap();
-
-        let s = (0..2028).map(|_| "A").collect::<String>();
+        // One block
+        let s = "A".repeat(2028);
         let pos = wal.write(s.into_bytes()).unwrap();
-        dbg!(&pos);
+        wal.read(pos.block_number, pos.chunk_offset).unwrap();
+
+        // Multiple blocks
+        let s = "A".repeat(45 * 1024);
+        let pos = wal.write(s.into_bytes()).unwrap();
         wal.read(pos.block_number, pos.chunk_offset).unwrap();
     }
 }
