@@ -45,16 +45,16 @@ impl From<ChunkType> for u8 {
         }
     }
 }
-struct Wal {
+pub struct Wal {
     file: std::sync::RwLock<std::fs::File>,
     current_block_number: u32,
     current_block_size: u32,
 }
 
 #[derive(Debug)]
-struct ChunkStartPosition {
-    block_number: u32,
-    chunk_offset: u64,
+pub struct ChunkStartPosition {
+    pub block_number: u32,
+    pub chunk_offset: u64,
 }
 
 impl Wal {

@@ -1,2 +1,2 @@
 mod error;
-mod wal;
+pub mod wal;
