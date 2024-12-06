@@ -1,4 +1,8 @@
-use std::{io::Write, os::unix::fs::FileExt, path::Path};
+use std::{
+    io::Write,
+    os::unix::fs::{FileExt, PermissionsExt},
+    path::Path,
+};
 
 use crate::error::WalError;
 
@@ -45,10 +49,13 @@ impl From<ChunkType> for u8 {
         }
     }
 }
-pub struct Wal {
+
+// A disk log file.
+pub struct Segment {
     file: std::sync::RwLock<std::fs::File>,
     current_block_number: u32,
     current_block_size: u32,
+    file_path: std::path::PathBuf,
 }
 
 #[derive(Debug)]
@@ -57,23 +64,34 @@ pub struct ChunkStartPosition {
     pub chunk_offset: u64,
 }
 
-impl Wal {
+impl Segment {
     pub fn open(filename: impl AsRef<Path>) -> Result<Self, WalError> {
         let file = std::fs::File::options()
-            .write(true)
             .read(true)
             .create(true)
+            .append(true)
             .open(filename.as_ref())?;
+        // Set file mod.
+        let mut perm = std::fs::metadata(filename.as_ref())?.permissions();
+        perm.set_mode(FILE_MODE_PERM);
+        std::fs::set_permissions(filename.as_ref(), perm)?;
         Ok(Self {
             file: std::sync::RwLock::new(file),
             current_block_number: 0,
             current_block_size: 0,
+            file_path: filename.as_ref().into(),
         })
     }
 
     pub fn sync(&self) -> Result<(), WalError> {
         let file = self.file.write().unwrap();
         file.sync_all()?;
+        Ok(())
+    }
+
+    /// Remove log file from disk.
+    pub fn remove(&self) -> Result<(), WalError> {
+        std::fs::remove_file(&self.file_path)?;
         Ok(())
     }
 
@@ -234,7 +252,7 @@ mod tests {
     #[test]
     fn wal_write() {
         let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
-        let mut wal = Wal::open(&path).unwrap();
+        let mut wal = Segment::open(&path).unwrap();
 
         let s = "A".repeat(2028);
         wal.write(s.into_bytes()).unwrap();
@@ -258,7 +276,7 @@ mod tests {
     #[test]
     fn wal_read() {
         let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
-        let mut wal = Wal::open(&path).unwrap();
+        let mut wal = Segment::open(&path).unwrap();
         // One block
         let s = "A".repeat(2028);
         let pos = wal.write(s.into_bytes()).unwrap();

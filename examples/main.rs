@@ -1,7 +1,7 @@
-use wal_rs::wal::{ChunkStartPosition, Wal};
+use wal_rs::segment::{ChunkStartPosition, Segment};
 fn main() {
     let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
-    let mut wal = Wal::open(&path).unwrap();
+    let mut wal = Segment::open(&path).unwrap();
     // One block
     let s = "A".repeat(2028);
     let pos = wal.write(s.into_bytes()).unwrap();
