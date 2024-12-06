@@ -102,37 +102,40 @@ impl Wal {
         }
         // If the size of the data exceeds the size of the block,
         // the data should be written to the block in batches.
-        let mut left_size = data_size;
+        let mut data_to_write_size = data_size;
 
-        while left_size > 0 {
-            // The left free size of the current chunk to store the data.
+        while data_to_write_size > 0 {
+            // Calculate how much can fit in this block.
             let mut chunk_size =
                 (BLOCK_SIZE - self.current_block_size - CHUNK_HEADER_SIZE) as usize;
-            // If the left size is enugh to store the left data
-            if chunk_size > left_size {
-                chunk_size = left_size;
+            // 确保不写入多余的数据
+            if chunk_size > data_to_write_size {
+                chunk_size = data_to_write_size;
             }
-            let mut chunk = vec![0; chunk_size as usize];
-            let mut end = data_size - left_size + chunk_size as usize;
+            let mut chunk = vec![0; chunk_size];
+
+            // data_size-data_to_write_size: 已经写入的数据量，即data当前的偏移
+            let cur_write_idx = data_size - data_to_write_size;
+            // chunk_size: 当前即将写入的数据量
+            let mut end = cur_write_idx + chunk_size as usize;
+            // In fact, this is not to be happend.
             if end > data_size {
                 end = data_size
             }
-
-            chunk.copy_from_slice(&data[data_size - left_size..end]);
-
+            chunk.copy_from_slice(&data[cur_write_idx..end]);
             // Write the chunks
-            if left_size == data_size {
-                // First chunk
+            if data_to_write_size == data_size {
+                // First chunk: when data_to_write_size == data_size
                 self.write_internal(chunk, ChunkType::First)?;
-            } else if left_size == chunk_size {
+            } else if data_to_write_size == chunk_size {
                 // Last chunk
                 self.write_internal(chunk, ChunkType::Last)?;
             } else {
                 self.write_internal(chunk, ChunkType::Middle)?;
             }
-            left_size -= chunk_size;
+            // Update the left data size
+            data_to_write_size -= chunk_size;
         }
-
         Ok(position)
     }
 }
