@@ -17,7 +17,10 @@ const CHUNK_HEADER_SIZE: u32 = 7;
 
 /// 32 KB
 const BLOCK_SIZE: u32 = 32 * 1024;
+/// File mod
 const FILE_MODE_PERM: u32 = 0o644;
+/// File suffix
+pub const SEGMENT_FILE_SUFFIX: &'static str = ".seg";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChunkType {
@@ -52,34 +55,41 @@ impl From<ChunkType> for u8 {
 
 // A disk log file.
 pub struct Segment {
+    id: u32,
     file: std::sync::RwLock<std::fs::File>,
     current_block_number: u32,
     current_block_size: u32,
+    offset: u64,
     file_path: std::path::PathBuf,
 }
 
 #[derive(Debug)]
-pub struct ChunkStartPosition {
+pub struct ChunkPosition {
+    pub segment_id: u32,
     pub block_number: u32,
     pub chunk_offset: u64,
 }
 
 impl Segment {
-    pub fn open(filename: impl AsRef<Path>) -> Result<Self, WalError> {
+    pub fn open(dir_path: impl AsRef<Path>, id: u32) -> Result<Self, WalError> {
+        let file_name = format!("{:09}{}", id, SEGMENT_FILE_SUFFIX);
+        let file_name = dir_path.as_ref().join(file_name);
         let file = std::fs::File::options()
             .read(true)
             .create(true)
             .append(true)
-            .open(filename.as_ref())?;
+            .open(&file_name)?;
         // Set file mod.
-        let mut perm = std::fs::metadata(filename.as_ref())?.permissions();
+        let mut perm = std::fs::metadata(&file_name)?.permissions();
         perm.set_mode(FILE_MODE_PERM);
-        std::fs::set_permissions(filename.as_ref(), perm)?;
+        std::fs::set_permissions(&file_name, perm)?;
         Ok(Self {
+            id,
             file: std::sync::RwLock::new(file),
             current_block_number: 0,
             current_block_size: 0,
-            file_path: filename.as_ref().into(),
+            offset: 0,
+            file_path: file_name,
         })
     }
 
@@ -95,7 +105,11 @@ impl Segment {
         Ok(())
     }
 
-    pub fn write(&mut self, data: Vec<u8>) -> Result<ChunkStartPosition, WalError> {
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn write(&mut self, data: Vec<u8>) -> Result<ChunkPosition, WalError> {
         // The left block space is not enough for a chunk header
         if self.current_block_size + CHUNK_HEADER_SIZE >= BLOCK_SIZE {
             // Zeror padding if necessary
@@ -109,7 +123,8 @@ impl Segment {
             self.current_block_size = 0;
         }
         // The start position(for read)
-        let position = ChunkStartPosition {
+        let position = ChunkPosition {
+            segment_id: self.id,
             block_number: self.current_block_number,
             chunk_offset: self.current_block_size as u64,
         };
@@ -189,6 +204,8 @@ impl Segment {
         if self.current_block_size > BLOCK_SIZE {
             panic!("Wrong! Can not exceed the block size");
         }
+        // Add the current offset
+        self.offset += buf.len() as u64;
         // Update the corresponding fields
         self.current_block_size += buf.len() as u32;
         // A new block

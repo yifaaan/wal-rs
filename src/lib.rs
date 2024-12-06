@@ -1,2 +1,4 @@
 mod error;
-pub mod segment;
+mod options;
+mod segment;
+pub mod wal;
