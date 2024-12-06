@@ -105,7 +105,7 @@ impl Wal {
         let mut data_to_write_size = data_size;
 
         while data_to_write_size > 0 {
-            // Calculate how much can fit in this block.
+            // Calculate how much can fit in this block.(Each chunk has a header)
             let mut chunk_size =
                 (BLOCK_SIZE - self.current_block_size - CHUNK_HEADER_SIZE) as usize;
             // 确保不写入多余的数据
@@ -137,5 +137,73 @@ impl Wal {
             data_to_write_size -= chunk_size;
         }
         Ok(position)
+    }
+
+    /// Write a chunk data to file
+    fn write_internal(
+        &mut self,
+        chunk_data: Vec<u8>,
+        chunk_type: ChunkType,
+    ) -> Result<(), WalError> {
+        let data_size = chunk_data.len();
+        let mut buf = vec![0; data_size + CHUNK_HEADER_SIZE as usize];
+        // Length: 2 Bytes, index:4-5
+        buf[4..6].copy_from_slice(&(data_size as u16).to_le_bytes());
+        // Type: 1 Byte, index:6
+        buf[6] = chunk_type.into();
+        // Data: N Bytes, index:7-end
+        buf[7..].copy_from_slice(&chunk_data);
+        // Checksum: 4 Bytes, index:0-3
+        let sum = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&buf[4..]);
+        buf[0..4].copy_from_slice(&sum.to_le_bytes());
+        // Append to the file
+        dbg!("begin write chunk to file");
+        let mut file = self.file.write().unwrap();
+        match file.write(&buf) {
+            Ok(_) => dbg!("write successful"),
+            Err(e) => dbg!(&format!("write failed: {:?}", e)),
+        };
+        dbg!("end write chunk to file");
+        drop(file);
+        if self.current_block_size > BLOCK_SIZE {
+            panic!("Wrong! Can not exceed the block size");
+        }
+        // Update the corresponding fields
+        self.current_block_size += buf.len() as u32;
+        // A new block
+        if self.current_block_size == BLOCK_SIZE {
+            self.current_block_number += 1;
+            self.current_block_size = 0;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wal_write() {
+        let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
+        let mut wal = Wal::open(&path).unwrap();
+
+        let s = (0..2028).map(|_| "A").collect::<String>();
+        wal.write(s.into_bytes()).unwrap();
+
+        let s = (0..30 * 1024).map(|_| "A").collect::<String>();
+        wal.write(s.into_bytes()).unwrap();
+
+        let s = "A".to_string().into_bytes();
+        wal.write(s).unwrap();
+
+        let s = (0..33 * 1024).map(|_| "A").collect::<String>();
+        wal.write(s.into_bytes()).unwrap();
+
+        let s = (0..66 * 1024).map(|_| "A").collect::<String>();
+        wal.write(s.into_bytes()).unwrap();
+
+        dbg!(wal.current_block_size);
+        // std::fs::remove_file(path).unwrap();
     }
 }
