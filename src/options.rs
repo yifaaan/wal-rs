@@ -1,3 +1,4 @@
 pub struct Options {
-    pub dir_path: std::path::PathBuf,
+    pub(crate) dir_path: std::path::PathBuf,
+    pub(crate) segment_size: u64,
 }

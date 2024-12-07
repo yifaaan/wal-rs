@@ -10,4 +10,7 @@ pub enum WalError {
 
     #[error("Parse int failed")]
     ParseIntFailed(#[from] std::num::ParseIntError),
+
+    #[error("Segment file not found")]
+    SegmentFileNotFound,
 }

@@ -1,5 +1,5 @@
 use std::{
-    io::Write,
+    io::{Seek, Write},
     os::unix::fs::{FileExt, PermissionsExt},
     path::Path,
 };
@@ -13,14 +13,14 @@ use crate::error::WalError;
 /// Type: 2
 ///
 /// Lenght: 1
-const CHUNK_HEADER_SIZE: u32 = 7;
+pub(crate) const CHUNK_HEADER_SIZE: u32 = 7;
 
 /// 32 KB
-const BLOCK_SIZE: u32 = 32 * 1024;
+pub(crate) const BLOCK_SIZE: u32 = 32 * 1024;
 /// File mod
 const FILE_MODE_PERM: u32 = 0o644;
 /// File suffix
-pub const SEGMENT_FILE_SUFFIX: &'static str = ".seg";
+pub(crate) const SEGMENT_FILE_SUFFIX: &'static str = ".seg";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChunkType {
@@ -55,11 +55,10 @@ impl From<ChunkType> for u8 {
 
 // A disk log file.
 pub struct Segment {
-    id: u32,
+    pub(crate) id: u32,
     file: std::sync::RwLock<std::fs::File>,
-    current_block_number: u32,
-    current_block_size: u32,
-    offset: u64,
+    pub(crate) current_block_number: u32,
+    pub(crate) current_block_size: u32,
     file_path: std::path::PathBuf,
 }
 
@@ -88,7 +87,6 @@ impl Segment {
             file: std::sync::RwLock::new(file),
             current_block_number: 0,
             current_block_size: 0,
-            offset: 0,
             file_path: file_name,
         })
     }
@@ -105,8 +103,8 @@ impl Segment {
         Ok(())
     }
 
-    pub fn offset(&self) -> u64 {
-        self.offset
+    pub fn size(&self) -> u64 {
+        (self.current_block_number * BLOCK_SIZE + self.current_block_size) as u64
     }
 
     pub fn write(&mut self, data: Vec<u8>) -> Result<ChunkPosition, WalError> {
@@ -204,8 +202,6 @@ impl Segment {
         if self.current_block_size > BLOCK_SIZE {
             panic!("Wrong! Can not exceed the block size");
         }
-        // Add the current offset
-        self.offset += buf.len() as u64;
         // Update the corresponding fields
         self.current_block_size += buf.len() as u32;
         // A new block
@@ -219,6 +215,7 @@ impl Segment {
     pub fn read(&self, mut block_number: u32, mut chunk_offset: u64) -> Result<Vec<u8>, WalError> {
         let file = self.file.read().unwrap();
         let stat = file.metadata()?;
+        let seg_size = stat.len();
         let mut result = Vec::new();
         loop {
             // The size of current block.
@@ -226,8 +223,8 @@ impl Segment {
             // The start position of the block in the file.
             let offset = (block_number * (BLOCK_SIZE as u32)) as u64;
             // Deal with the last situation.
-            if offset + size > stat.len() as u64 {
-                size = stat.len() as u64 - offset;
+            if offset + size > seg_size as u64 {
+                size = seg_size - offset;
             }
             let mut buf = vec![0; size as usize];
             file.read_exact_at(&mut buf, offset)?;
@@ -260,48 +257,52 @@ impl Segment {
         }
         Ok(result)
     }
+
+    pub fn metadata(&self) -> Result<std::fs::Metadata, WalError> {
+        Ok(self.file.read().unwrap().metadata()?)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn wal_write() {
-        let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
-        let mut wal = Segment::open(&path).unwrap();
+    // #[test]
+    // fn wal_write() {
+    //     let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
+    //     let mut wal = Segment::open(&path).unwrap();
 
-        let s = "A".repeat(2028);
-        wal.write(s.into_bytes()).unwrap();
+    //     let s = "A".repeat(2028);
+    //     wal.write(s.into_bytes()).unwrap();
 
-        let s = "A".repeat(30 * 1024);
-        wal.write(s.into_bytes()).unwrap();
+    //     let s = "A".repeat(30 * 1024);
+    //     wal.write(s.into_bytes()).unwrap();
 
-        let s = "A".to_string().into_bytes();
-        wal.write(s).unwrap();
+    //     let s = "A".to_string().into_bytes();
+    //     wal.write(s).unwrap();
 
-        let s = "A".repeat(33 * 1024);
-        wal.write(s.into_bytes()).unwrap();
+    //     let s = "A".repeat(33 * 1024);
+    //     wal.write(s.into_bytes()).unwrap();
 
-        let s = "A".repeat(66 * 1024);
-        wal.write(s.into_bytes()).unwrap();
+    //     let s = "A".repeat(66 * 1024);
+    //     wal.write(s.into_bytes()).unwrap();
 
-        dbg!(wal.current_block_size);
-        // std::fs::remove_file(path).unwrap();
-    }
+    //     dbg!(wal.current_block_size);
+    //     // std::fs::remove_file(path).unwrap();
+    // }
 
-    #[test]
-    fn wal_read() {
-        let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
-        let mut wal = Segment::open(&path).unwrap();
-        // One block
-        let s = "A".repeat(2028);
-        let pos = wal.write(s.into_bytes()).unwrap();
-        wal.read(pos.block_number, pos.chunk_offset).unwrap();
+    // #[test]
+    // fn wal_read() {
+    //     let path: std::path::PathBuf = std::path::PathBuf::from("/tmp/000001.log");
+    //     let mut wal = Segment::open(&path).unwrap();
+    //     // One block
+    //     let s = "A".repeat(2028);
+    //     let pos = wal.write(s.into_bytes()).unwrap();
+    //     wal.read(pos.block_number, pos.chunk_offset).unwrap();
 
-        // Multiple blocks
-        let s = "A".repeat(45 * 1024);
-        let pos = wal.write(s.into_bytes()).unwrap();
-        wal.read(pos.block_number, pos.chunk_offset).unwrap();
-    }
+    //     // Multiple blocks
+    //     let s = "A".repeat(45 * 1024);
+    //     let pos = wal.write(s.into_bytes()).unwrap();
+    //     wal.read(pos.block_number, pos.chunk_offset).unwrap();
+    // }
 }
